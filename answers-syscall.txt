@@ -1,0 +1,19 @@
+Q: which function called syscall?
+A: usertrap() at kernel/trap.c
+
+Q: What is the value of p->trapframe->a7 and what does that value represent?
+A: 0xf. It means the num of syscall, which here is exec.
+
+Q: What was the previous mode that the CPU was in?
+A: The output is 0x22, which is 0010,0010 in binary. It means the SPP bit is 0, so it was in the user mode.
+
+NOTE: mepc: machine exception program conunter
+
+Q: Write down the assembly instruction the kernel is panicing at. Which register corresponds to the variable num?
+A: panic at the instuction "lw      a3,0(zero)". a3 corresponds to num.
+
+Q: Why does the kernel crash? Hint: look at figure 3-3 in the text; is address 0 mapped in the kernel address space? Is that confirmed by the value in scause above? (See description of scause in RISC-V privileged instructions) 
+A: Because the virtual address is unmap, which causes the momry fault. Pity that no.(But it has disabled va translation, why?). Yes, it is detailed in the doc that the scause means load page fault.
+
+Q: What is the name of the binary that was running when the kernel paniced? What is its process id (pid)? 
+A: initcode\000\000\000\000\000\000\000. 0x1, which means 1, the first process
