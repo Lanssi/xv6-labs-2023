@@ -132,6 +132,16 @@ found:
     return 0;
   }
 
+  // *** my code ***
+  // Set up uvm USYSCALL
+  // and grant pid  
+  if ((p->usyscall = (struct usyscall *)kalloc()) == 0) {
+     freeproc(p);
+     release(&p->lock);
+     return 0;
+  }
+  p->usyscall->pid = p->pid;
+
   // An empty user page table.
   p->pagetable = proc_pagetable(p);
   if(p->pagetable == 0){
@@ -145,7 +155,7 @@ found:
   memset(&p->context, 0, sizeof(p->context));
   p->context.ra = (uint64)forkret;
   p->context.sp = p->kstack + PGSIZE;
-
+  
   return p;
 }
 
@@ -158,6 +168,10 @@ freeproc(struct proc *p)
   if(p->trapframe)
     kfree((void*)p->trapframe);
   p->trapframe = 0;
+  // *** My Code ***
+  if(p->usyscall)
+    kfree((void *)p->usyscall);
+  p->usyscall=0;
   if(p->pagetable)
     proc_freepagetable(p->pagetable, p->sz);
   p->pagetable = 0;
@@ -202,6 +216,16 @@ proc_pagetable(struct proc *p)
     return 0;
   }
 
+  // *** My Code ***
+  // map USYSCALL
+  if (mappages(pagetable, USYSCALL, PGSIZE,
+	      (uint64)(p->usyscall), PTE_R | PTE_U) < 0) {
+    uvmunmap(pagetable, TRAMPOLINE, 1, 0);
+    uvmunmap(pagetable, TRAPFRAME, 1, 0);
+    uvmfree(pagetable, 0);
+    return 0;
+  }
+
   return pagetable;
 }
 
@@ -212,6 +236,8 @@ proc_freepagetable(pagetable_t pagetable, uint64 sz)
 {
   uvmunmap(pagetable, TRAMPOLINE, 1, 0);
   uvmunmap(pagetable, TRAPFRAME, 1, 0);
+  // *** My Code ***
+  uvmunmap(pagetable, USYSCALL, 1, 0);
   uvmfree(pagetable, sz);
 }
 
@@ -685,4 +711,32 @@ procdump(void)
     printf("%d %s %s", p->pid, state, p->name);
     printf("\n");
   }
+}
+
+// Pgaccess
+int pgaccess(uint64 base, int size, uint64 mask)
+{
+  if (size >= 64) {
+    printf("pgaccess: page size too large\n");
+    return -1;
+  }
+
+  struct proc *p = myproc();
+  uint64 ret = 0;
+  pte_t * pte;
+
+  for (int i=0; i<size; i++) {
+    pte = walk(p->pagetable, (base + PGSIZE*i), 0);
+    if (*pte & PTE_A)
+      ret |= (1<<i);
+    *pte &= ~(PTE_A);
+  }
+
+  //copy out
+  if (copyout(p->pagetable, mask, (char*)&ret, sizeof(ret)) < 0) {
+    printf("pgaccess: copyout failed\n");
+    return -1;
+  }
+
+  return 0;
 }

@@ -75,7 +75,14 @@ int
 sys_pgaccess(void)
 {
   // lab pgtbl: your code here.
-  return 0;
+  uint64 base, mask;
+  int size;
+
+  argaddr(0, &base);
+  argint(1, &size);
+  argaddr(2, &mask);
+
+  return pgaccess(base, size, mask);
 }
 #endif
 
