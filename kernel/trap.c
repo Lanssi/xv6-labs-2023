@@ -67,6 +67,7 @@ usertrap(void)
     syscall();
   } else if((which_dev = devintr()) != 0){
     // ok
+    //printf("ticks_count: %d ticks: %d\n", p->ticks_count, p->ticks);
   } else {
     printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
     printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
@@ -77,8 +78,27 @@ usertrap(void)
     exit(-1);
 
   // give up the CPU if this is a timer interrupt.
-  if(which_dev == 2)
+  if(which_dev == 2) {
+    //periodic fn
+    //Before going to handler, save context. Refer to kernel/proc.h to check what to save. 
+    p->ticks_count++;
+    if (p->ticks_count == p->ticks) {
+      //printf("%d\n", p->handler_lock);
+      if (!p->handler_lock) {
+        memmove((void *)&(p->timerintr_trapframe), (void *)p->trapframe,
+			sizeof(p->timerintr_trapframe));
+        p->trapframe->epc = (uint64)p->handler;
+	p->handler_lock = 1;
+      }
+      //p->trapframe->epc = (uint64)p->handler;
+      p->ticks_count = 0;
+    } else if (p->ticks_count < 0) {	//prevent overflow
+      p->ticks_count = 0;
+    }
+
+    //sched
     yield();
+  }
 
   usertrapret();
 }

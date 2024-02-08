@@ -146,6 +146,14 @@ found:
   p->context.ra = (uint64)forkret;
   p->context.sp = p->kstack + PGSIZE;
 
+  // traps_alarm
+  // Initialize p->ticks_count, p->interval, p->handler
+  p->ticks_count = 0;
+  p->ticks = -1;
+  p->handler = 0;
+  memset((void *)&(p->timerintr_trapframe), 0, sizeof(p->timerintr_trapframe));
+  p->handler_lock = 0;
+
   return p;
 }
 
@@ -685,4 +693,29 @@ procdump(void)
     printf("%d %s %s", p->pid, state, p->name);
     printf("\n");
   }
+}
+
+int
+sigalarm (int ticks, void (*handler)())
+{
+  if (ticks < 0) {
+    printf("sigalarm: ticks < 0, which is illegal!");
+    return -1;
+  }
+
+  struct proc *p = myproc();
+  
+  acquire(&p->lock);
+  
+  if (ticks > 0)
+    p->ticks = ticks;
+  else
+    p->ticks = -1;
+
+  p->handler = handler;
+  p->ticks_count = 0;
+
+  release(&p->lock);
+
+  return 0;
 }
