@@ -1,0 +1,2 @@
+Q: Why are there missing keys with 2 threads, but not with 1 thread? Identify a sequence of events with 2 threads that can lead to a key being missing. Submit your sequence with a short explanation in answers-thread.txt. 
+A: when running with 2 threads, race condition appears at put() and insert(), which will cause node missing in hash table thus keys missing. The detail is, when there are 2 threads trying to insert into the same bucket, both try to update e->next then the head pointer. But the 2 operations should be atomic. Here is why it will cause problem.
