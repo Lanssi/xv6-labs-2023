@@ -65,9 +65,20 @@ usertrap(void)
     intr_on();
 
     syscall();
+
+  // Added by lanssi
+  } else if (r_scause() == 15) {
+    uint64 va = PGROUNDDOWN(r_stval());
+    
+    if (va < 0 || va >=MAXVA)
+      goto write_page_fault_err; 
+
+    if (cowcopy(p->pagetable, va) != 0)
+      goto write_page_fault_err; 
   } else if((which_dev = devintr()) != 0){
     // ok
   } else {
+    write_page_fault_err:
     printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
     printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
     setkilled(p);

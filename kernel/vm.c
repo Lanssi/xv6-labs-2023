@@ -15,6 +15,9 @@ extern char etext[];  // kernel.ld sets this to end of kernel code.
 
 extern char trampoline[]; // trampoline.S
 
+//Added by lanssi
+extern int ref_array[];
+
 // Make a direct-map page table for the kernel.
 pagetable_t
 kvmmake(void)
@@ -315,7 +318,7 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
   pte_t *pte;
   uint64 pa, i;
   uint flags;
-  char *mem;
+  //char *mem;
 
   for(i = 0; i < sz; i += PGSIZE){
     if((pte = walk(old, i, 0)) == 0)
@@ -324,19 +327,28 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
       panic("uvmcopy: page not present");
     pa = PTE2PA(*pte);
     flags = PTE_FLAGS(*pte);
-    if((mem = kalloc()) == 0)
+
+    // Added by lanssi
+    if (*pte & PTE_W) {
+      *pte = (*pte & ~PTE_W) | PTE_COW;
+      flags = (flags & ~PTE_W) | PTE_COW;
+    }
+    mappages(new, i, PGSIZE, pa, flags);
+    ref_array[(uint64)pa / PGSIZE]++;
+    
+    /*if((mem = kalloc()) == 0)
       goto err;
     memmove(mem, (char*)pa, PGSIZE);
     if(mappages(new, i, PGSIZE, (uint64)mem, flags) != 0){
       kfree(mem);
       goto err;
-    }
+    }*/
   }
   return 0;
 
- err:
+ /*err:
   uvmunmap(new, 0, i / PGSIZE, 1);
-  return -1;
+  return -1;*/
 }
 
 // mark a PTE invalid for user access.
@@ -366,9 +378,15 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
     if(va0 >= MAXVA)
       return -1;
     pte = walk(pagetable, va0, 0);
+    // Added by lanssi
     if(pte == 0 || (*pte & PTE_V) == 0 || (*pte & PTE_U) == 0 ||
-       (*pte & PTE_W) == 0)
+       ((*pte & PTE_W) == 0 && (*pte & PTE_COW) == 0))
       return -1;
+    
+    if (*pte & PTE_COW)
+      if (cowcopy(pagetable, va0) != 0)
+        return -1;
+
     pa0 = PTE2PA(*pte);
     n = PGSIZE - (dstva - va0);
     if(n > len)
@@ -447,5 +465,46 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
     return 0;
   } else {
     return -1;
+  }
+}
+
+// Added by lanssi
+int
+cowcopy(pagetable_t pagetable, uint64 va)
+{
+  pte_t *pte;
+  uint64 pa;
+  uint flags;
+  char *mem;
+
+  if ((pte = walk(pagetable, va, 0)) == 0) {
+    printf("cowcopy: walk failed\n");
+    return -1;
+  }
+
+  pa = PTE2PA(*pte);
+  if (*pte & PTE_COW) {
+    if (ref_array[(uint64)pa / PGSIZE] == 1) {
+      *pte = (*pte & ~PTE_COW) | PTE_W;
+    } else {
+      if ((mem = kalloc()) == 0) {
+        printf("cowcopy: no more free memory\n");
+        return -1;
+      }
+
+      memmove(mem, (char *)PTE2PA(*pte), PGSIZE);
+
+      flags = (PTE_FLAGS(*pte) & ~PTE_COW) | PTE_W;
+      uvmunmap(pagetable, va, 1, 1);
+
+      if (mappages(pagetable, va, PGSIZE, (uint64)mem, flags) != 0) {
+        printf("cowcopy: mappages failed");
+	return -1;
+      } 
+    }
+    return 0;
+  } else {
+    printf("cowcopy: trying to write a read-only page\n");
+    return -1; 
   }
 }
