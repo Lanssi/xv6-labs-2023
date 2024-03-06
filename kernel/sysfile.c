@@ -310,7 +310,7 @@ sys_open(void)
   struct file *f;
   struct inode *ip;
   int n;
-  int try_times=0;
+  int symlinkdepth=0;
 
   argint(1, &omode);
   if((n = argstr(0, path, MAXPATH)) < 0)
@@ -339,8 +339,8 @@ start:
   }
 
   if (ip->type==T_SYMLINK && !(omode&O_NOFOLLOW)) {
-    try_times++;
-    if (try_times > 10) {
+    symlinkdepth++;
+    if (symlinkdepth > 10) {
       iunlockput(ip);
       end_op();
       return -1;
@@ -531,6 +531,13 @@ sys_symlink(void)
   begin_op();
 
   if ((ip = create(path, T_SYMLINK, 0, 0)) == 0) {
+    end_op();
+    return -1;
+  }
+  // There may be exsiting file, but is not type of symlink.
+  if (ip->type != T_SYMLINK) {
+    printf("file exsits, whose type is not symlink\n");
+    iunlockput(ip);
     end_op();
     return -1;
   }
