@@ -85,10 +85,10 @@ usertrap(void)
     if (p->ticks_count == p->ticks) {
       //printf("%d\n", p->handler_lock);
       if (!p->handler_lock) {
-        memmove((void *)&(p->timerintr_trapframe), (void *)p->trapframe,
-			sizeof(p->timerintr_trapframe));
+	      memmove((void *)&(p->timerintr_trapframe), (void *)p->trapframe,
+			      sizeof(p->timerintr_trapframe));
         p->trapframe->epc = (uint64)p->handler;
-	p->handler_lock = 1;
+        p->handler_lock = 1;
       }
       //p->trapframe->epc = (uint64)p->handler;
       p->ticks_count = 0;
