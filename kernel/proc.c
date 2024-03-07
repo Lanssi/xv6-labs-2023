@@ -126,13 +126,6 @@ found:
   p->pid = allocpid();
   p->state = USED;
 
-  // Initialize the vma array and the currently available VMA top address.
-  for(int i = 0;i<VMA_MAX;i++) {
-     p->vma_array[i].valid = 0;
-     p->vma_array[i].refcnt = 0;
-  }
-  p->vma_top_addr = MAXVA-2*PGSIZE;
-
   // Allocate a trapframe page.
   if((p->trapframe = (struct trapframe *)kalloc()) == 0){
     freeproc(p);
@@ -153,6 +146,10 @@ found:
   memset(&p->context, 0, sizeof(p->context));
   p->context.ra = (uint64)forkret;
   p->context.sp = p->kstack + PGSIZE;
+
+  // Setup vma array
+  memset(p->vma, 0, sizeof(struct vma)*MAXVMA);
+  p->vma_top_addr = MAXVA - 2*PGSIZE;
 
   return p;
 }
@@ -307,14 +304,6 @@ fork(void)
   // copy saved user registers.
   *(np->trapframe) = *(p->trapframe);
 
-  np->vma_top_addr = p->vma_top_addr;
-  for(int i = 0;i<VMA_MAX;i++) {
-    if(p->vma_array[i].valid) {
-      filedup(p->vma_array[i].f);
-      memmove(&np->vma_array[i], &p->vma_array[i], sizeof(struct vma));
-    }
-  }
-
   // Cause fork to return 0 in the child.
   np->trapframe->a0 = 0;
 
@@ -323,6 +312,14 @@ fork(void)
     if(p->ofile[i])
       np->ofile[i] = filedup(p->ofile[i]);
   np->cwd = idup(p->cwd);
+
+  // Added by lanssi
+  // copy vma
+  for (int i=0; i<MAXVMA; i++) {
+    *(&np->vma[i]) = *(&p->vma[i]);
+    if (np->vma[i].len) filedup(np->vma[i].f);
+  }
+  np->vma_top_addr = p->vma_top_addr;
 
   safestrcpy(np->name, p->name, sizeof(p->name));
 
@@ -364,21 +361,6 @@ exit(int status)
 {
   struct proc *p = myproc();
 
-  // Release the mapped files in the virtual memory. 
-  for(int i = 0;i<VMA_MAX;i++) {
-    if(p->vma_array[i].valid) {
-      struct vma* vp = &p->vma_array[i];
-      for(uint64 addr = vp->addr;addr<vp->addr+vp->len;addr+=PGSIZE) {
-        if(walkaddr(p->pagetable, addr) != 0) {
-          if(vp->flags==MAP_SHARED) filewrite(vp->f, addr, PGSIZE);
-          uvmunmap(p->pagetable, addr, 1, 1);
-        }
-      }
-      fileclose(p->vma_array[i].f);
-      p->vma_array[i].valid = 0;
-    }
-  }
-
   if(p == initproc)
     panic("init exiting");
 
@@ -388,6 +370,19 @@ exit(int status)
       struct file *f = p->ofile[fd];
       fileclose(f);
       p->ofile[fd] = 0;
+    }
+  }
+
+  // Added by lanssi
+  // Close all vma
+  for (int i=0; i<MAXVMA; i++) {
+    struct vma *vmap = &p->vma[i];
+    if (vmap->len == 0) continue;
+    for (int j=0; j<vmap->len; j+=PGSIZE) {
+      if (walkaddr(p->pagetable, vmap->addr+j)) {
+        if (vmap->flags == MAP_SHARED) filewrite(vmap->f, vmap->addr+j, PGSIZE);
+	uvmunmap(p->pagetable, vmap->addr+j, 1, 1);
+      }
     }
   }
 

@@ -504,10 +504,13 @@ sys_pipe(void)
   return 0;
 }
 
-uint64 sys_mmap(void)
+// Added by lanssi
+uint64
+sys_mmap(void)
 {
   uint64 addr;
   int len, prot, flags, fd, off;
+
   argaddr(0, &addr);
   argint(1, &len);
   argint(2, &prot);
@@ -515,77 +518,81 @@ uint64 sys_mmap(void)
   argint(4, &fd);
   argint(5, &off);
 
-  struct proc* p = myproc();
-  struct file* f = p->ofile[fd];
+  struct proc *p = myproc();
+  struct file *fp = p->ofile[fd];
+  
+  if ((prot&PROT_WRITE) && (flags==MAP_SHARED) && !fp->writable) {
+    printf("mmap: file is read-only\n");
+    return -1;
+  }
 
-  // Check whether this operation is legal
-  if((flags==MAP_SHARED && f->writable==0 && (prot&PROT_WRITE))) return -1;
+  struct vma *vmap = p->vma;
+  for (; vmap<p->vma+MAXVMA; vmap++) {
+    if (vmap->len == 0)
+      break; 
+  }
 
-  // Find an empty VMA struct.
-  int idx = 0;
-  for(;idx<VMA_MAX;idx++)
-    if(p->vma_array[idx].valid==0)
-      break;
-  if(idx==VMA_MAX)
-    panic("All VMA struct is full!");
-  // printf("sys_mmap: Find available VMA struct, idx = %d\n", idx);
+  if (vmap == p->vma+MAXVMA) {
+    printf("no empty vma\n");
+    return -1;
+  }
 
-  // Fill this VMA struct.
-  struct vma* vp = &p->vma_array[idx];
-  vp->valid = 1;
-  vp->len = len;
-  vp->flags = flags;
-  vp->off = off;
-  vp->prot = prot;
-  vp->f = f;
-  filedup(f); // This file's refcnt += 1.
-  p->vma_top_addr-=len;
-  vp->addr = p->vma_top_addr; // The usable user virtual address.
-  // printf("sys_mmap: Successfully mapped a file, with addr=%p, len=%x\n", vp->addr, vp->len);
-  return vp->addr;
+  p->vma_top_addr -= len;
+  vmap->f = fp;
+  vmap->addr = p->vma_top_addr;
+  vmap->len = len;
+  vmap->perm = prot;
+  vmap->flags = flags;
+  vmap->off = off;
+
+  filedup(fp);
+  
+  //printf("va %p, start %p, end %p, top_addr %p\n", addr, vmap->addr, vmap->addr+vmap->len,
+  //		  p->vma_top_addr);
+
+  return vmap->addr;
 }
 
-uint64 sys_munmap(void)
+uint64
+sys_munmap(void)
 {
   uint64 addr;
   int len;
+
   argaddr(0, &addr);
   argint(1, &len);
-  struct proc* p = myproc();
 
-  struct vma* vp = 0;
-  // Find the VMA struct that this file belongs to.
-  for(struct vma *now = p->vma_array;now<p->vma_array+VMA_MAX;now++)
-  {
-    // printf("usertrap: VMA, addr=%p, len=%x, valid=%d\n", now->addr, now->len, now->valid);
-    if(now->addr<=addr && addr<now->addr+now->len
-        && now->valid)
-    {
-      vp = now;
+  struct proc *p = myproc();
+  struct vma *vmap = p->vma;
+  for (; vmap<p->vma+MAXVMA; vmap++) {
+    //printf("va %p, start %p, end %p\n", addr, vmap->addr, vmap-addr+vmap->len);
+    if ((addr >= vmap->addr) && (addr < vmap->addr+vmap->len))
       break;
+  }
+  if (vmap == p->vma+MAXVMA) {
+    printf("addr not mapped\n");
+    return -1;
+  }
+
+  if (addr+len > vmap->addr+vmap->len) {
+    printf("munmap len exceeds the vma end va\n");
+    return -1;
+  }
+
+  for (int i=0; i<len; i+=PGSIZE) {
+    if (walkaddr(p->pagetable, addr+i)) {
+      if(vmap->flags == MAP_SHARED) filewrite(vmap->f, addr+i, PGSIZE);
+      uvmunmap(p->pagetable, addr+i, 1, 1);
     }
   }
 
-  if(vp)
-  {
-    if( walkaddr( p->pagetable , addr ) != 0)
-    {
-      // Write back and unmap.
-      if(vp->flags==MAP_SHARED) filewrite(vp->f, addr, len);
-      uvmunmap(p->pagetable, addr, len/PGSIZE, 1);
-      return 0;
-    }
-    // Update the file's refcnt.
-    vp->refcnt -= 1;
-    if(vp->refcnt) // set the vma struct to invalid.
-    {
-      fileclose(vp->f);
-      vp->valid = 0;
-    }
-    return 0;
-  }
-  else
-  {
-    panic("Cannot find a vma struct representing this file!");
-  }
+  // update vma
+  p->vma_top_addr += len;
+  vmap->addr += len;
+  vmap->len -= len;
+
+  if (vmap->len == 0)
+    fileclose(vmap->f);
+
+  return 0;
 }

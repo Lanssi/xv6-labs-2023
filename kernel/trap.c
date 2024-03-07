@@ -68,43 +68,42 @@ usertrap(void)
     intr_on();
 
     syscall();
-    } else if(r_scause()==13){
-    // Handle load page fault (when a file is mapped in the vitrual address space, but the physical page is not loaded).
-    uint64 target_va = r_stval();
-    struct vma* vp = 0;
-    // printf("usertrap: Trying to visit va %p\n", target_va);
 
-    // Find the VMA struct that this file belongs to.
-    for(struct vma *now = p->vma_array;now<p->vma_array+VMA_MAX;now++) {
-      // printf("usertrap: VMA, addr=%p, len=%x, valid=%d\n", now->addr, now->len, now->valid);
-      if(now->addr<=target_va && target_va<now->addr+now->len
-         && now->valid) {
-        vp = now;
+  // Added by lanssi 
+  } else if (r_scause() == 13) {	  
+    uint64 va = r_stval();
+	  
+    struct vma* vmap = p->vma;
+    for (; vmap<p->vma+MAXVMA; vmap++) {
+      if ((va >= vmap->addr) && (va < vmap->addr+vmap->len))
         break;
-      }
+      //printf("va %p, start %p, end %p, %d, %d\n", va, vmap->addr, vmap->addr + 8192,
+		      //(va >= vmap->addr), (va < vmap->addr+vmap->len));
     }
 
-    if(vp) {
-      // Allocate a page into physical memory, and map it to the virtual memory.
-      uint64 mem = (uint64)kalloc();
-      memset((void *)mem, 0, PGSIZE); // Set the page to all zero.
-      if(mappages(p->pagetable, target_va, PGSIZE, mem, PTE_U|PTE_V|(vp->prot<<1))<0)
-        panic("Cannot map a virtual page for the file!");
+    // not found
+    if (vmap == p->vma+MAXVMA) {
+      printf("target va not mapped\n");
+      goto bad; 
+    // found
+    } else {
+      uint64 mem;
+      
+      if ((mem = (uint64)kalloc()) == 0)
+        panic("scause 13: kalloc failed\n");
+      memset((char *)mem, 0, PGSIZE);
+      if (mappages(p->pagetable, PGROUNDDOWN(va), PGSIZE, mem, PTE_U | (vmap->perm<<1)) < 0)
+        panic("scause 13: mappages failed\n");
 
-      // Load the content of the page.
-      vp->refcnt += 1;
-      ilock(vp->f->ip);
-      readi(vp->f->ip, 0, mem, target_va-vp->addr, PGSIZE); // Load a file page from the disk
-      iunlock(vp->f->ip);
+      ilock(vmap->f->ip);
+      readi(vmap->f->ip, 0, mem, PGROUNDDOWN(va)-vmap->addr, PGSIZE);
+      iunlock(vmap->f->ip);
     }
-    else {
-      printf("Unable to find the VMA struct that the file belongs to!\n");
-      goto unexpected_scause;
-    }
+
   } else if((which_dev = devintr()) != 0){
     // ok
   } else {
-unexpected_scause:
+bad:
     printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
     printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
     setkilled(p);
